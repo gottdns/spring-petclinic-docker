@@ -160,3 +160,71 @@ For pull requests, editor preferences are available in the [editor config](.edit
 ## License
 
 The Spring PetClinic sample application is released under version 2.0 of the [Apache License](https://www.apache.org/licenses/LICENSE-2.0).
+
+
+
+## Training for Docker (compose)
+This training covers advanced Docker build/run techniques. The goal is to learn how to optimize the build speed of a Docker image (using caching), and building a local, Docker-Compose-based development environment for a Gradle-based application.
+
+# Prerequisites
+Docker Desktop (requires license from operations) or Colima (see Colima installation tutorial)
+Basic Docker knowledge, regarding building and running images
+Basic Docker Compose knowledge
+
+# Preparation steps
+On GitHub.com, create a fork of https://github.com/spring-projects/spring-petclinic. If you use the normal fork feature, your fork will always be public. If you want your project's visibility to be private, you have to use https://github.com/new/import instead of forking.
+
+# Task 1: Build an optimized Dockerfile
+The goal is to containerize the Petclinic application so that the image build speed is as fast as possible, thanks to intelligent use of BuildKit's caching mechanism.
+
+Create a multi-stage Dockerfile whose first stage (called "build") builds the application with Gradle as .jar file (based on a Java SDK image), the second stage (called "final", based on a Java JRE image) copies the built .jar file into the final image and sets a CMD to start it
+Whenever you change some of the .java source code..
+... the corresponding RUN statement in your Dockerfile should only rebuild the application. It should not download Gradle or any jar-file dependencies again.
+... only those java files that were changed since the last image build should be rebuilt
+In the second stage, use the COPY --link trick, and explain to your mentor what it does and why we should use it
+Make sure that the final image (the second stage) is actually runnable (docker run -p 8080:8080 ...) and that the frontend loads
+Look out for error messages such as Removing daemon from the registry due to communication failure and find a way to fix them
+Hints:
+
+# Helpful resources:
+https://www.augmentedmind.de/2022/01/23/optimize-docker-build-speed-in-ci/
+https://docs.docker.com/language/java/build-images/
+https://www.augmentedmind.de/2023/02/05/docker-image-analysis-and-diffing/
+
+For an equivalent to Maven's ./mvnw dependency:resolve (which downloads Maven itself and the dependencies), search for Gradle's write-verification-metadata flag, that you provide to Gradle's help target. Gradle then downloads dependencies, and generates a verification metadata XML file which you should delete again, as you would otherwise run into problems during the Gradle buildstep (the build step would fail to verify at least some of the dependencies).
+To see the full history of the output of BuildKit, set the environment variable BUILDKIT_PROGRESS=plain
+To avoid that always all java-files are rebuilt, see https://docs.gradle.org/current/userguide/build_cache.html
+
+# Task 2: Local developer setup with docker-compose
+A common problem in projects is that developers prefer using natively installed tooling (e.g. a Java SDK installed directly on their Macbook) over Docker-based development. However, in any deployed environment (e.g. production) and in CI/CD pipelines, we use containers to build/test/run the apps.
+
+In order to make it easy for developers to test whether the app image can be built locally, runs locally, or tests pass, many projects have a docker-compose.yaml, to simulate a "production-like" environment that uses containers.
+
+The goal of this task is to build a docker-compose.yaml file:
+
+When the app runs, it should not use the embedded H2 database, but a MySQL database (which you need to define as a separate service in docker-compose.yaml). The Petclinic's README provides some details here, and the repository also comes with a docker-compose.yaml file that you can base your docker-compose.yaml file on. So in total, your docker-compose.yaml file should define two services, one for the Petclinic app, one for the database.
+Note: the term "profile" used in the Petclinic README is ambiguous! A docker-compose profile is something different than a Spring profile! The Petclinic app already comes with pre-made Spring profiles that instruct the backend to use the MySQL database, see the application-mysql.properties file stored in the repo.
+When you run docker-compose up -d, the MySQL service should start, and only once it is up and the port is reachable (hint: docker-compose supports health checks), the app container should be started. Otherwise, the Spring Boot app might try to connect to the MySQL database which is not ready yet, and throw errors.
+Publish the Petclinic's container port so that you can access the website in your browser
+If you run docker compose up [-d], and your Petclinic image has never been built yet, it should be automatically built
+Hints:
+
+https://reflectoring.io/spring-boot-profiles/
+https://docs.docker.com/compose/compose-file/compose-versioning/ (read the red box carefully, essentially the take-away message is that you should not have a version: "x.y" block at the top of your docker-compose.yaml file anymore, because these are for the Compose V1 legacy version. These Docker folks have some brain damage when it comes to versioning.)
+https://docs.docker.com/compose/compose-file/build/
+
+# Task 3: reducing copy and paste of DB credentials
+In your current solution, you most likely have multiple copies of the strings that define the MySQL database host, database name, username and password (spread over the Spring Profile file and the docker-compose.yaml file). This is bad, because if you change the value in one location, you have to remember to replace it in all other locations.
+
+Make use of the .env file mechanism of Docker Compose, to reduce these redundancies as much as possible.
+
+# Task 4: running tests with docker compose
+The goal is to allow your developers to run unit tests against the MySQL database. Because this is an integration test (no longer a unit test), it should not be done as part of building an image, but should be run as container.
+
+In your Dockerfile, introduce a new stage called "testhelper" (FROM build as testhelper) which copies the /root/.gradle mounted-cache folder into the image
+
+(example: RUN --mount=type=cache,id=gradle-cache,target=/.gradle cp -R /.gradle /root).
+
+Introduce a new "test" service in your docker-compose.yaml which builds this new "testhelper" stage and runs the resulting image as container, overwriting the entrypoint/CMD to execute the Gradle command that triggers the test suite (configuring the mysql Spring profile). Make sure that this test container does not automatically restart once the test has completed
+
+Use Docker Compose profiles to differentiate whether docker compose up should run the Petclinic app normally, or whether it should run the tests
